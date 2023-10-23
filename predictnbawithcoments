@@ -1,0 +1,169 @@
+# Import necessary libraries
+import pandas as pd
+
+# Install pandas library if not already installed
+# %pip install pandas
+
+# Read the NBA games dataset
+df = pd.read_csv("nba_games.csv", index_col=0)
+
+# Sort the dataframe by date and reset the index
+df = df.sort_values("date")
+df = df.reset_index(drop=True)
+
+# Remove unnecessary columns
+del df["mp.1"]
+del df["mp_opp.1"]
+del df["index_opp"]
+
+# Define a function to add a target column for each team
+def add_target(team):
+    team["target"] = team["won"].shift(-1)
+    return team
+
+# Apply the add_target function to each group (team) in the dataframe
+df = df.groupby("team", group_keys=False).apply(add_target)
+
+# Replace missing values in the target column with 2 and convert it to integer
+df["target"][pd.isnull(df["target"])] = 2
+df["target"] = df["target"].astype(int, errors="ignore")
+
+# Display the dataframe
+df
+
+# Display the count of 'won' values
+df["won"].value_counts()
+
+# Display the count of 'target' values
+df["target"].value_counts()
+
+# Identify and handle missing values
+nulls = pd.isnull(df)
+nulls = nulls.sum()
+nulls = nulls[nulls > 0]
+valid_columns = df.columns[~df.columns.isin(nulls.index)]
+df = df[valid_columns].copy()
+
+# Install scikit-learn library if not already installed
+# %pip install scikit-learn
+
+# Import necessary scikit-learn modules
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.feature_selection import SequentialFeatureSelector
+from sklearn.linear_model import RidgeClassifier
+
+# Create a RidgeClassifier model
+rr = RidgeClassifier(alpha=1)
+
+# Define a time series split for cross-validation
+split = TimeSeriesSplit(n_splits=3)
+
+# Initialize SequentialFeatureSelector for feature selection
+sfs = SequentialFeatureSelector(rr, n_features_to_select=30, direction="forward", cv=split)
+
+# List of columns to be removed from feature selection
+removed_columns = ["season", "date", "won", "target", "team", "team_opp"]
+
+# Select columns for feature scaling
+selected_columns = df.columns[~df.columns.isin(removed_columns)]
+
+# Scale selected columns using MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler
+scaler = MinMaxScaler()
+df[selected_columns] = scaler.fit_transform(df[selected_columns])
+
+# Perform feature selection using SequentialFeatureSelector
+sfs.fit(df[selected_columns], df["target"])
+
+# Get the list of selected predictors
+predictors = list(selected_columns[sfs.get_support()])
+
+# Display selected predictors
+predictors
+
+# Define a backtesting function for evaluating the model's performance
+def backtest(data, model, predictors, start=2, step=1):
+    # ... (Implementation of backtesting function)
+
+# Apply backtesting on the dataframe using the RidgeClassifier model and selected predictors
+predictions = backtest(df, rr, predictors)
+
+# Display the predictions
+predictions
+
+# Calculate accuracy using sklearn's accuracy_score
+from sklearn.metrics import accuracy_score
+accuracy = accuracy_score(predictions["actual"], predictions["prediction"])
+print("Accuracy:", accuracy)
+
+# Display the ratio of wins for home teams
+df.groupby("home").apply(lambda x: x[x["won"] == 1.].shape[0] / x.shape[0])
+
+# Create a rolling average of features for each team
+df_rolling = df[list(selected_columns) + ["won", "team", "season"]]
+df_rolling = df_rolling.groupby(["team", "season"], group_keys=False).apply(find_team_average)
+
+# Display the rolling averages
+df_rolling
+
+# Rename columns with a suffix to indicate the rolling average window
+rolling_cols = [f"{col}_10" for col in df_rolling.columns]
+df_rolling.columns = rolling_cols
+
+# Concatenate the original dataframe with the rolling averages
+df = pd.concat([df, df_rolling], axis=1)
+
+# Drop rows with missing values
+df = df.dropna()
+
+# Define functions for shifting and adding columns
+def shift_col(team, col_name):
+    next_col = team[col_name].shift(-1)
+    return next_col
+
+def add_col(df, col_name):
+    return df.groupby("team", group_keys=False).apply(lambda x: shift_col(x, col_name))
+
+# Add shifted columns for home, team_opp, and date
+df["home_next"] = add_col(df, "home")
+df["team_opp_next"] = add_col(df, "team_opp")
+df["date_next"] = add_col(df, "date")
+
+# Create a copy of the dataframe
+df = df.copy()
+
+# Merge the dataframe with itself based on team, date_next, and team_opp_next
+full = df.merge(df[rolling_cols + ["team_opp_next", "date_next", "team"]],
+                left_on=["team", "date_next"],
+                right_on=["team_opp_next", "date_next"])
+
+# Display columns for comparison
+full[["team_x", "team_opp_next_x", "team_y", "team_opp_next_y", "date_next"]]
+
+# Identify and list columns to be removed
+removed_columns = list(full.columns[full.dtypes == "object"]) + removed_columns
+
+# Display removed columns
+removed_columns
+
+# Select columns for feature scaling after merging
+selected_columns = full.columns[~full.columns.isin(removed_columns)]
+
+# Perform feature selection using SequentialFeatureSelector on the merged dataframe
+sfs.fit(full[selected_columns], full["target"])
+
+# Get the list of selected predictors
+predictors = list(selected_columns[sfs.get_support()])
+
+# Display selected predictors
+predictors
+
+# Apply backtesting on the merged dataframe using the RidgeClassifier model and selected predictors
+predictions = backtest(full, rr, predictors)
+
+# Calculate accuracy on the merged dataframe
+accuracy = accuracy_score(predictions["actual"], predictions["prediction"])
+print(accuracy)
+
+# Display final predictions
+predictions
