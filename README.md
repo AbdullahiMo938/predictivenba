@@ -1,5 +1,5 @@
 
-For the README page of your GitHub repository containing the described code, you should provide a clear and concise overview of what the code does, its features, and how to set it up and use it. Here's a suggested structure for your README:
+F
 
 NBA Games Data Analysis with Python
 Overview
